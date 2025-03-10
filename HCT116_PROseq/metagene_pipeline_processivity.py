@@ -17,83 +17,105 @@ size_factor_file = sys.argv[2]
 endtype = sys.argv[3]
 
 ### Initialize global variables
+count_store,rep_store,reptimes,size_factors = {},{},{},{}
+sample_names,sample_basenames = [],[]
 pathlist = list(Path(indir).glob('**/*counts.bed'))
 #numbins_list = [10,100]
+conds = ['DMSO','IFN','SY5609','KB0742','SY_KB'] # File condition basenames
 numbins_list = [10]
-size_factors = {}
+nrep = 2
 
 ### Define functions
-def readin_counts(countdict,repdict,filename,sample,sample_base,numbins):
-  if sample not in countdict.keys():
-    countdict[sample] = {}
+def readin_counts(sampdict,repdict,iters,filename,sample,sample_base,nbin):
+  if sample not in sampdict.keys():
+    sampdict[sample] = {}
   if sample_base not in repdict.keys():
     repdict[sample_base] = {}
   with open(filename) as f:
-    counts = [0]
-    gene = 'A'
-    strand = '+'
-    genelength = 1
+    region = {}
     firstline = True
-    for line in f:
-      countin = tuple(line.strip().split("\t"))
-      if countin[7] != gene:
+    counts,region = set_region_info(region,False,firstline)
+    for readline in f:
+      line = tuple(readline.strip().split("\t"))
+      if int(line[1]) == region['coord']:
+        continue
+      if (line[7] == region['name']) & (int(line[5]) != region['start_coord']):
+        continue
+      if (line[7] == region['name']) & (int(line[6]) != region['end_coord']):
+        continue
+      if (line[7] != region['name']) & (int(line[5]) in range((region['start_coord']-1),(region['end_coord']+1))):
+        continue
+      if (line[7] != region['name']) & (int(line[6]) in range((region['start_coord']-1),(region['end_coord']+1))):
+        continue
+      elif line[7] != region['name']:
         if not firstline:
-          if strand == '-':
-            counts.reverse()
-          counts = list(np.array(counts)/size_factors[sample])
-          counts = [int(i) if int(i) == i else i for i in counts]
-          countdict = add_counts(countdict,sample,counts,gene,genelength,numbins)
-          repdict = add_replicate_counts(repdict,sample_base,counts,gene,genelength,numbins)
+          sampdict,repdict = store_region(sampdict,repdict,counts,region,sample,sample_base,iters,nbin)
         firstline = False
-        genelength = (int(countin[6]) - int(countin[5]))
-        counts = [0 for i in range(0,genelength)]
-        gene = countin[7]
-        start_coord = int(countin[5])
-        strand = countin[9]
-      coord = int(countin[1]) - start_coord
-      counts[coord] = int(countin[3])
-  if strand == '-':
-    counts.reverse()
-  counts = list(np.array(counts)/size_factors[sample])
-  counts = [int(i) if int(i) == i else i for i in counts]
-  countdict = add_counts(countdict,sample,counts,gene,genelength,numbins)
-  repdict = add_replicate_counts(repdict,sample_base,counts,gene,genelength,numbins)
-  return countdict,repdict
+        counts,region = set_region_info(region,line,firstline)
+      region['coord'] = int(line[1])
+      curr_coord = region['coord'] - region['start_coord']
+      counts[curr_coord] = int(line[3])
+  sampdict,repdict = store_region(sampdict,repdict,counts,region,sample,sample_base,iters,nbin)
+  return sampdict,repdict
 
-def add_counts(countdict,sample,rawcounts,gene,genelength,numbins):
-  if np.sum(rawcounts) > 100: # Only include genes that have some counts
-    binsize = int(genelength/numbins)
-    binned = []
-    for i in range(0,(numbins-1)):
-      binsum = sum(rawcounts[i*binsize:(i+1)*binsize])
-      binned.append(binsum/binsize)
-    last_binsize = len(rawcounts[(numbins-1)*binsize:])
-    binsum = sum(rawcounts[(numbins-1)*binsize:])
-    binned.append(binsum/last_binsize)
-    countdict[sample][gene] = binned
-  return countdict
-
-def add_replicate_counts(repdict,sample_base,repcounts,gene,genelength,numbins):
-  if gene in repdict[sample_base].keys():
-    repdict[sample_base][gene] = [
-      ((repdict[sample_base][gene][i] + repcounts[i])/2) for i in range(0,len(repcounts))
-    ]
-    if np.sum(repdict[sample_base][gene]) < 101: # Only include genes that have some counts
-      repdict[sample_base].pop(gene)
-    else:
-      repcounts = repdict[sample_base][gene]
-      binsize = int(genelength/numbins)
-      binned = []
-      for i in range(0,(numbins-1)):
-        binsum = sum(repcounts[i*binsize:(i+1)*binsize])
-        binned.append(binsum/binsize)
-      last_binsize = len(repcounts[(numbins-1)*binsize:])
-      binsum = sum(repcounts[(numbins-1)*binsize:])
-      binned.append(binsum/last_binsize)
-      repdict[sample_base][gene] = binned
+def set_region_info(reg,ln,first):
+  if first:
+    reg['name'] = 'A'
+    reg['coord'],reg['start_coord'],reg['end_coord'], reg['length'] = 0,0,0,0
+    reg['strand'] = '+'
+    cts = [0]
   else:
-    repdict[sample_base][gene] = repcounts
-  return repdict
+    reg['name'] = ln[7]
+    reg['start_coord'] = int(ln[5])
+    reg['end_coord'] = int(ln[6])
+    reg['strand'] = ln[9]
+    reg['length'] = reg['end_coord'] - reg['start_coord']
+    cts = [0 for i in range(0,(reg['length']))]
+  return cts,reg
+
+def store_region(sampcts,repcts,cts,reg,samp,samp_base,niter,numbins):
+  if reg['strand'] == '-':
+    cts.reverse()
+  cts = list(np.array(cts)/size_factors[samp])
+  cts = [int(i) if int(i) == i else i for i in cts]
+  sampcts = add_counts(sampcts,cts,reg['name'],samp,reg['length'],numbins)
+  repcts = add_replicate_counts(repcts,cts,reg['name'],samp_base,reg['length'],niter,numbins)
+  return sampcts,repcts
+
+def add_counts(store,ct,name,smp,reglen,nbins):
+  if np.sum(ct) > 100: # Only include genes that have some counts
+    binsize = int(reglen/nbins)
+    binned = []
+    for i in range(0,(nbins-1)):
+      binsum = sum(ct[i*binsize:(i+1)*binsize])
+      binned.append(binsum/binsize)
+    last_binsize = len(ct[(nbins-1)*binsize:])
+    binsum = sum(ct[(nbins-1)*binsize:])
+    binned.append(binsum/last_binsize)
+    store[smp][name] = binned
+  return store
+
+def add_replicate_counts(store,ct,name,smp,reglen,n,nbins):
+  if name in store[smp].keys():
+    store[smp][name] = [
+      (store[smp][name][i] + ct[i]) for i in range(0,reglen)
+    ]
+    if ((n[smp] > (nrep-1)) & (np.sum(store[smp][name]) < 101)): # Only include genes that have some counts
+      store[smp].pop(name)
+    else:
+      ct = store[smp][name]
+      binsize = int(reglen/nbins)
+      binned = []
+      for i in range(0,(nbins-1)):
+        binsum = sum(ct[i*binsize:(i+1)*binsize])
+        binned.append(binsum/binsize)
+      last_binsize = len(ct[(nbins-1)*binsize:])
+      binsum = sum(ct[(nbins-1)*binsize:])
+      binned.append(binsum/last_binsize)
+      store[smp][name] = binned
+  else:
+    store[smp][name] = ct
+  return store
 
 def find_genes_to_keep(countdict,sample):
   current_counts = pd.DataFrame(countdict[sample])
@@ -113,13 +135,12 @@ def sample_calc_output(countdict,sample,genes):
   # Calculate metagene values
   calculations = {
     'allgenes': current_counts,
-    'med': current_counts.median(axis=1),
-    'mean': current_counts.mean(axis=1),
+    'mean': pd.DataFrame(current_counts.mean(axis=1),columns=['mean_counts'])
   }
   if numbin == 10:
     # Do last bin over 2nd bin calculation
     binratio = current_counts.iloc[9,:]/current_counts.iloc[1,:]
-    calculations['binratio'] = binratio
+    calculations['binratio'] = pd.DataFrame(binratio,columns=['10th_over_2nd_binratio'])
   output_sample_data(calculations,sample)
   return calculations
 
@@ -128,7 +149,6 @@ def output_sample_data(metacalcs,sample):
   outfiles = {
     'allgenes': os.path.join(indir,sample + suffixes['allgenes']),
     'binratio': os.path.join(indir,sample + suffixes['binratio']),
-    'med': os.path.join(indir,sample + suffixes['median']),
     'mean': os.path.join(indir,sample + suffixes['mean']),
   }
   # Output data
@@ -136,7 +156,7 @@ def output_sample_data(metacalcs,sample):
     metacalcs[key].to_csv(
       outfiles[key],
       sep='\t',
-      header=False,
+      header=True,
       index=True,
       quoting=csv.QUOTE_NONE,
     )
@@ -151,19 +171,20 @@ with open(size_factor_file) as f:
 
 for numbin in numbins_list:
 
-  count_store = {}
-  rep_store = {}
-  sample_names = []
-  sample_basenames = []
   # 1) Grab count numbers by looping through intersect files
   for path in pathlist:
     sample_name = str(path).split('.')[0].split('/')[-1]
     sample_names.append(sample_name)
     sample_basename = sample_name.split('_')
     sample_basename = '_'.join(sample_basename[0:(len(sample_basename)-1)])
+    if sample_basename not in conds:
+      continue
     if sample_basename not in sample_basenames:
       sample_basenames.append(sample_basename)
-    count_store,rep_store = readin_counts(count_store,rep_store,path,sample_name,sample_basename,numbin)
+      reptimes[sample_basename] = 1
+    else:
+      reptimes[sample_basename] += 1
+    count_store,rep_store = readin_counts(count_store,rep_store,reptimes,path,sample_name,sample_basename,numbin)
   for sample_basename in sample_basenames:
     genes_to_scan = list(rep_store[sample_basename].keys())
     for gid in genes_to_scan:
@@ -185,7 +206,6 @@ for numbin in numbins_list:
   suffixes = {
     'allgenes': ('.' + str(numbin) + 'bins.' + endtype + '.allgenes.txt'),
     'binratio': ('.' + str(numbin) + 'bins.' + endtype + '.binratio.txt'),
-    'median': ('.' + str(numbin) + 'bins.' + endtype + '.median.txt'),
     'mean': ('.' + str(numbin) + 'bins.' + endtype + '.mean.txt'),
   }
 
@@ -200,8 +220,8 @@ for numbin in numbins_list:
       sample_name,
       final_gene_list,
     )
-    all_sample_means[sample_name] = sample_calcs['mean']
-    all_sample_binratios[sample_name] = sample_calcs['binratio']
+    all_sample_means[sample_name] = pd.Series(sample_calcs['mean']['mean_counts'])
+    all_sample_binratios[sample_name] = pd.Series(sample_calcs['binratio']['10th_over_2nd_binratio'])
 
   for sample_basename in sample_basenames:
     rep_calcs = sample_calc_output(
@@ -209,8 +229,8 @@ for numbin in numbins_list:
       sample_basename,
       final_rep_gene_list,
     )
-    all_rep_means[sample_basename] = rep_calcs['mean']
-    all_rep_binratios[sample_basename] = rep_calcs['binratio']
+    all_rep_means[sample_basename] = pd.Series(rep_calcs['mean']['mean_counts'])
+    all_rep_binratios[sample_basename] = pd.Series(rep_calcs['binratio']['10th_over_2nd_binratio'])
 
   colnames = list(all_sample_means.columns)
   colnames.sort()

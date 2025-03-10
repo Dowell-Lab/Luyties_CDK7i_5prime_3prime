@@ -21,7 +21,7 @@ count_store,rep_store,reptimes,size_factors = {},{},{},{}
 sample_names,sample_basenames = [],[]
 senselist = list(Path(indir).glob('**/*.counts.bed'))
 nrep = 2
-conds = ['IFN','SY5609']
+conds = ['DMSO','IFN','SY5609','KB0742','SY_KB'] # File condition basenames
 if endtype == '5prime':
   anticount_store,antirep_store = {},{}
   antisenselist = list(Path(indir).glob('**/*antisense_counts.bed'))
@@ -43,7 +43,9 @@ def readin_counts(sampdict,repdict,iters,filename,sample,sample_base):
       line = tuple(readline.strip().split("\t"))
       if int(line[1]) == region['coord']:
         continue
-      if ((line[7] == region['name']) & (int(line[5]) != region['start_coord'])):
+      if (line[7] == region['name']) & (int(line[5]) != region['start_coord']):
+        continue
+      if (line[7] == region['name']) & (int(line[6]) != region['end_coord']):
         continue
       if line[7] != region['name']:
         if not firstline:
@@ -60,11 +62,12 @@ def set_region_info(reg,ln,first):
   cts = [0 for i in range(0,window)]
   if first:
     reg['name'] = 'A'
-    reg['coord'],reg['start_coord'] = 0,0
+    reg['coord'],reg['start_coord'],reg['end_coord'] = 0,0,0
     reg['strand'] = '+'
   else:
     reg['name'] = ln[7]
     reg['start_coord'] = int(ln[5])
+    reg['end_coord'] = int(ln[6])
     reg['strand'] = ln[9]
   return cts,reg
 
@@ -109,12 +112,11 @@ def bin_and_calculate(ctdf,bsize):
   for j in range(0,(window-bsize-1)):
     bsum = ctdf.iloc[j:(j+bsize),:].sum(axis=0)
     bct.append(list(bsum/bsize))
-  bdf = pd.DataFrame(bct,columns=bsum.index)
+  bdf = pd.DataFrame(bct,columns=ctdf.columns)
   # Calculate values
   metacalcs = {
     'allregs': bdf,
-    'med': bdf.median(axis=1),
-    'mean': bdf.mean(axis=1),
+    'mean': pd.DataFrame(bdf.mean(axis=1),columns=['mean_counts']),
   }
   return metacalcs
 
@@ -130,7 +132,6 @@ def output_sample_data(metacalcs,smp):
   # Make output filenames
   outfiles = {
     'allregs': os.path.join(indir,smp + suffixes['allregs']),
-    'med': os.path.join(indir,smp + suffixes['median']),
     'mean': os.path.join(indir,smp + suffixes['mean']),
   }
   # Output data
@@ -138,7 +139,7 @@ def output_sample_data(metacalcs,smp):
     metacalcs[key].to_csv(
       outfiles[key],
       sep='\t',
-      header=False,
+      header=True,
       index=True,
       quoting=csv.QUOTE_NONE,
     )
@@ -204,7 +205,6 @@ final_rep_reg_list = list(set.intersection(*map(set,all_rep_regs)))
 for binsize in binsizes:
   suffixes = {
     'allregs': ('.' + str(binsize) + 'bpbin.' + endtype + '_metagene.allregions.txt'),
-    'median': ('.' + str(binsize) + 'bpbin.' + endtype + '_metagene.median.txt'),
     'mean': ('.' + str(binsize) + 'bpbin.' + endtype + '_metagene.mean.txt'),
   }
   # 3) For each sample, extract genes, bin values, output counts and calcs
@@ -216,7 +216,7 @@ for binsize in binsizes:
       sample_name,
       final_reg_list,
     )
-    all_sample_means[sample_name] = sample_means
+    all_sample_means[sample_name] = pd.Series(sample_means['mean_counts'])
   colnames = list(all_sample_means.columns)
   colnames.sort()
   all_sample_means = all_sample_means[colnames]
@@ -226,7 +226,7 @@ for binsize in binsizes:
       sample_basename,
       final_rep_reg_list,
     )
-    all_rep_means[sample_basename] = rep_means
+    all_rep_means[sample_basename] = pd.Series(rep_means['mean_counts'])
   colnames = list(all_rep_means.columns)
   colnames.sort()
   all_rep_means = all_rep_means[colnames]
@@ -252,7 +252,6 @@ if endtype == '5prime':
   for binsize in binsizes:
     suffixes = {
       'allregs': ('.' + str(binsize) + 'bpbin.antisense.' + endtype + '_metagene.allregions.txt'),
-      'median': ('.' + str(binsize) + 'bpbin.antisense.' + endtype + '_metagene.median.txt'),
       'mean': ('.' + str(binsize) + 'bpbin.antisense.' + endtype + '_metagene.mean.txt'),
     }
     # 3) For each sample, extract genes, bin values, output counts and calcs
@@ -264,7 +263,7 @@ if endtype == '5prime':
         sample_name,
         final_reg_list,
       )
-      all_sample_means[sample_name] = sample_means
+      all_sample_means[sample_name] = pd.Series(sample_means['mean_counts'])
     colnames = list(all_sample_means.columns)
     colnames.sort()
     all_sample_means = all_sample_means[colnames]
@@ -274,7 +273,7 @@ if endtype == '5prime':
         sample_basename,
         final_rep_reg_list,
       )
-      all_rep_means[sample_basename] = rep_means
+      all_rep_means[sample_basename] = pd.Series(rep_means['mean_counts'])
     colnames = list(all_rep_means.columns)
     colnames.sort()
     all_rep_means = all_rep_means[colnames]

@@ -4,25 +4,25 @@
 
 ### Main input variables
 
-annotationbase=long_genes_120kb_plus_filt
+annotationbase=top_1000_filt
 up3=1000 #upstream window for 3' metagene
 down3=7500 #downstream window for 3' metagene
 full3=8501 #full window size for 3' metagene (up + down + 1)
-up5=1000 #upstream window for 5' metagene
-down5=1000 #downstream window for 5' metagene
-full5=2001 #full window size for 5' metagene (up + down + 1)
-projectdir=<path to project directory>
+up5=1500 #upstream window for 5' metagene
+down5=1500 #downstream window for 5' metagene
+full5=3001 #full window size for 5' metagene (up + down + 1)
+projectdir=/path/to/project/directory
 processdir="$projectdir"/processing_files
 scriptdir="$projectdir"/scripts/metagene
 
 ### I/O variables
 
-indir=<path to input directory>
-outdir="$projectdir"/SY5609_75min_analysis/"$annotationbase"
-sizefactors="$processdir"/size_factors/SY5609_75min_size_factors_corrected.txt
+indir=/path/to/bam/files
+outdir="$projectdir"/"$annotationbase"
+sizefactors="$processdir"/SY5609_75min_size_factors_corrected.txt
 expt=SY560975min
 
-scratch=<path to scratch directory>/metagenes/"$expt"_"$annotationbase"
+scratch=/path/to/scratch/"$expt"_"$annotationbase"
 
 ### Variables set based on above variables
 
@@ -68,7 +68,7 @@ fi
 ######## Run genomecov and python scripts for samples ########
 
 ### Run 5' metagene script
-sbatch "$scriptdir"/metagene_pipeline_5prime_v2.sbatch \
+sbatch "$scriptdir"/metagene_pipeline_5prime.sbatch \
   "$scratch" \
   "$indir" \
   "$sizefactors" \
@@ -81,7 +81,7 @@ sbatch "$scriptdir"/metagene_pipeline_5prime_v2.sbatch \
 sleep 210
 
 ### Run 3' metagene script
-sbatch "$scriptdir"/metagene_pipeline_3prime_v2.sbatch \
+sbatch "$scriptdir"/metagene_pipeline_3prime.sbatch \
   "$scratch" \
   "$indir" \
   "$sizefactors" \
@@ -91,13 +91,13 @@ sbatch "$scriptdir"/metagene_pipeline_3prime_v2.sbatch \
   "$outdir"
 
 # BAM creation doesn't take very long, so make sure no reading conflicts occur
-#sleep 180
+sleep 180
 
 ### Run full gene processivity script
-#sbatch "$scriptdir"/metagene_pipeline_processivity_v2.sbatch \
-#  "$scratch" \
-#  "$indir" \
-#  "$sizefactors" \
-#  "$annotationfull" \
-#  "$projectdir" \
-#  "$outdir"
+sbatch "$scriptdir"/metagene_pipeline_processivity.sbatch \
+  "$scratch" \
+  "$indir" \
+  "$sizefactors" \
+  "$annotationfull" \
+  "$projectdir" \
+  "$outdir"

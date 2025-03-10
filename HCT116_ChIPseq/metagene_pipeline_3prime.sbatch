@@ -1,14 +1,14 @@
 #!/bin/bash
 #SBATCH --job-name=metagene_3prime      # Job name
 #SBATCH --mail-type=NONE         # Mail events (NONE, BEGIN, END, FAIL, ALL)
-#SBATCH --mail-user=<user email> # Where to send mail
+#SBATCH --mail-user=<email> # Where to send mail
 #SBATCH --nodes=1
 #SBATCH --ntasks=16              # Number of CPU (processer cores i.e. tasks)
-#SBATCH --time=12:00:00         # Time limit hrs:min:sec
+#SBATCH --time=04:00:00         # Time limit hrs:min:sec
 #SBATCH --partition=short
 #SBATCH --mem=8gb               # Memory limit
-#SBATCH --output=<path to outerr directory>/%x_%j.out
-#SBATCH --error=<path to outerr directory>/%x_%j.err
+#SBATCH --output=/path/to/outerr/%x_%j.out
+#SBATCH --error=/path/to/outerr/%x_%j.err
 
 
 ##### OUTPUT RUN PARAMETERS #######################
@@ -38,28 +38,27 @@ annotation=$4
 fullwindow=$5
 projectdir=$6
 outdir="$7"/metagene_"$endtype"
-genome=<path to hg38 genome>/hg38.fa
-chromsizes=<path to hg38 genome>/hg38.chrom.sizes
-pyscript="$projectdir"/scripts/metagene/metagene_pipeline_geneends.py
+dataset=$8
+genome=<path to genome fasta>
+chromsizes=<path to genome chromosome size file>
+pyscript=<path to scripts>/metagene_pipeline_geneends.py
 
 ###################################################
 
 mkdir -p "$scratch"/"$endtype" "$outdir"
 
-for bamfile in "$indir"/5609_B2_*bam; do
+for bamfile in "$indir"/<bam_prefix>*bam; do
 
-  # Find sample
-  bn=$(basename "$bamfile" .sorted.bam_SBB.bam)
+  # Find basename
+  bn=$(basename "$bamfile" <bam suffix>)
   basename="$scratch"/"$endtype"/"$bn"
-  locname=/localscratch/"$endtype"/"$bn"
-  mkdir /localscratch/"$endtype"
 
   if [ -e "$basename".counts.bed ] && [ -s "$basename".counts.bed ]; then
     continue
 
   else
 
-    # Extract only reads in regions in 3' annotation file
+    # Extract only reads in regions in 5' annotation file
     # Filtering steps as follows:
       # First read in pair only, only properly paired
       # No multimapped reads
@@ -74,7 +73,7 @@ for bamfile in "$indir"/5609_B2_*bam; do
     samtools view -@ 16 -h -P "$bamfile" -L "$annotation" \
       | samtools view -@ 16 -h -f 66 \
       | grep -P "(NH:i:1|^@)" \
-      | awk 'BEGIN{FS=OFS="\t"};
+      | awk 'BEGIN{FS=OFS="\t"}; \
              {if (NF < 9) {print $0} \
               else if (($9 % 2) != 0) \
                 {if ($9 < 0) {newcol=($4+(($9-1)/2)); $4=newcol; print $0} \
@@ -83,32 +82,29 @@ for bamfile in "$indir"/5609_B2_*bam; do
               else {newcol=($4+($9/2)); $4=newcol; print $0} \
              }' \
       | samtools view -@ 16 -h -Sb - \
-      > "$locname".bam
+      > "$basename".bam
 
-    samtools sort -@ 16 -o "$locname".sorted.bam "$locname".bam
+    samtools sort -@ 16 -o "$basename".sorted.bam "$basename".bam
 
     # Run genomecov to grab read coverage of 5' base of reads through those regions
-    # Separately for + and - strands
-    bedtools genomecov -dz -5 -ibam "$locname".sorted.bam \
-      > "$locname".cov.prelim.bed
+    bedtools genomecov -dz -5 -ibam "$basename".sorted.bam \
+      > "$basename".cov.prelim.bed
 
     # Fix columns for intersecting
-    awk 'BEGIN{FS=OFS="\t"} {print $1,$2,$2+1,$3}' "$locname".cov.prelim.bed \
-      > "$locname".cov.bed
+    awk 'BEGIN{FS=OFS="\t"} {print $1,$2,$2+1,$3}' "$basename".cov.prelim.bed \
+      > "$basename".cov.bed
 
     # Run intersects to remove rest of genome and sort strands
     bedtools intersect -wa -wb \
-      -a "$locname".cov.bed \
+      -a "$basename".cov.bed \
       -b "$annotation" \
       > "$basename".counts.bed
 
-    rm "$locname"*
+    rm "$basename".cov* "$basename"*bam*
 
   fi
 
 done
-
-rm -r /localscratch/"$endtype"
 
 # Run python script to generate binned combined counts for metagenes
 # Bin sizes are defined within python script
@@ -116,7 +112,8 @@ python3 "$pyscript" \
   "$scratch"/"$endtype" \
   "$sizefactors" \
   "$fullwindow" \
-  "$endtype"
+  "$endtype" \
+  "$dataset"
 
 rsync "$scratch"/"$endtype"/*.txt "$outdir"/
 

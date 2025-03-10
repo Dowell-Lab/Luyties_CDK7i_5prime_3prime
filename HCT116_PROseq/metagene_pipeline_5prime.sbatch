@@ -1,14 +1,15 @@
 #!/bin/bash
 #SBATCH --job-name=metagene_5prime      # Job name
 #SBATCH --mail-type=NONE         # Mail events (NONE, BEGIN, END, FAIL, ALL)
-#SBATCH --mail-user=<user email> # Where to send mail
+#SBATCH --mail-user=<email> # Where to send mail
 #SBATCH --nodes=1
 #SBATCH --ntasks=16              # Number of CPU (processer cores i.e. tasks)
-#SBATCH --time=12:00:00         # Time limit hrs:min:sec
+#SBATCH --time=6:00:00         # Time limit hrs:min:sec
 #SBATCH --partition=short
 #SBATCH --mem=8gb               # Memory limit
-#SBATCH --output=<path to outerr directory>/%x_%j.out
-#SBATCH --error=<path to outerr directory>/%x_%j.err
+#SBATCH --output=/path/to/outerr/%x_%j.out
+#SBATCH --error=/path/to/outerr/%x_%j.err
+
 
 ##### OUTPUT RUN PARAMETERS #######################
 
@@ -23,7 +24,7 @@ echo Using ${NPROCS} processors
 
 ##### LOAD MODULES ##############
 
-module load samtools/1.10
+module load samtools/1.16.1
 module load bedtools/2.28.0
 module load python/3.6.3
 
@@ -37,21 +38,19 @@ annotation=$4
 fullwindow=$5
 projectdir=$6
 outdir="$7"/metagene_"$endtype"
-genome=<path to hg38 genome>/hg38.fa
-chromsizes=<path to hg38 genome>/hg38.chrom.sizes
-pyscript="$projectdir"/scripts/metagene/metagene_pipeline_geneends_v2.py
+genome=/path/to/genome/fasta
+chromsizes=/path/to/genome/chromosome/sizes
+pyscript="$projectdir"/scripts/metagene_pipeline_geneends.py
 
 ###################################################
 
 mkdir -p "$scratch"/"$endtype" "$outdir"
-mkdir -p /localscratch/"$endtype"
 
 for bamfile in "$indir"/*bam; do
 
   # Find basename
   bn=$(basename "$bamfile" .sorted.bam)
   basename="$scratch"/"$endtype"/"$bn"
-  locname=/localscratch/"$endtype"/"$bn"
 
   if [ -e "$basename".counts.bed ] && [ -s "$basename".counts.bed ]; then
     continue
@@ -61,51 +60,49 @@ for bamfile in "$indir"/*bam; do
     samtools view -@ 16 -h "$bamfile" -L "$annotation" \
       | grep -P "(NH:i:1|^@)" \
       | samtools view -@ 16 -Sb -h - \
-      > "$locname".bam
-    samtools sort -@ 16 -o "$locname".sorted.bam "$locname".bam
+      > "$basename".bam
+    samtools sort -@ 16 -o "$basename".sorted.bam "$basename".bam
 
     # Run genomecov to grab read coverage of 5' base of reads through those regions
     # Separately for + and - strands
-    bedtools genomecov -dz -5 -ibam "$locname".sorted.bam -strand + \
-      > "$locname".cov.pos_prelim.bed
-    bedtools genomecov -dz -5 -ibam "$locname".sorted.bam -strand - \
-      > "$locname".cov.neg_prelim.bed
+    bedtools genomecov -dz -5 -ibam "$basename".sorted.bam -strand + \
+      > "$basename".cov.pos_prelim.bed
+    bedtools genomecov -dz -5 -ibam "$basename".sorted.bam -strand - \
+      > "$basename".cov.neg_prelim.bed
 
     # Fix columns for intersecting 
-    awk '{FS=OFS="\t"} {print $1,$2,$2+1,$3}' "$locname".cov.pos_prelim.bed \
-      > "$locname".cov.pos.bed
-    awk '{FS=OFS="\t"} {print $1,$2,$2+1,$3}' "$locname".cov.neg_prelim.bed \
-      > "$locname".cov.neg.bed
+    awk '{FS=OFS="\t"} {print $1,$2,$2+1,$3}' "$basename".cov.pos_prelim.bed \
+      > "$basename".cov.pos.bed
+    awk '{FS=OFS="\t"} {print $1,$2,$2+1,$3}' "$basename".cov.neg_prelim.bed \
+      > "$basename".cov.neg.bed
 
-    rm "$locname"*_prelim.bed
+    rm "$basename"*_prelim.bed
 
     # Run intersects to remove rest of genome and sort strands
     bedtools intersect -wa -wb \
-      -a "$locname".cov.pos.bed \
+      -a "$basename".cov.pos.bed \
       -b "$annotation" \
-      > "$locname".int.bed
+      > "$basename".int.bed
 
-    awk '{if($10 == "+") print $0}' "$locname".int.bed > "$locname".cov.pos.bed
-    awk '{if($10 == "-") print $0}' "$locname".int.bed > "$locname".cov.antipos.bed
+    awk '{if($10 == "+") print $0}' "$basename".int.bed > "$basename".cov.pos.bed
+    awk '{if($10 == "-") print $0}' "$basename".int.bed > "$basename".cov.antipos.bed
 
     bedtools intersect -wa -wb \
-      -a "$locname".cov.neg.bed \
+      -a "$basename".cov.neg.bed \
       -b "$annotation" \
-      > "$locname".int.bed
+      > "$basename".int.bed
 
-    awk '{if($10 == "-") print $0}' "$locname".int.bed > "$locname".cov.neg.bed
-    awk '{if($10 == "+") print $0}' "$locname".int.bed > "$locname".cov.antineg.bed
+    awk '{if($10 == "-") print $0}' "$basename".int.bed > "$basename".cov.neg.bed
+    awk '{if($10 == "+") print $0}' "$basename".int.bed > "$basename".cov.antineg.bed
 
-    cat "$locname".cov.pos.bed "$locname".cov.neg.bed > "$basename".counts.bed
-    cat "$locname".cov.antipos.bed "$locname".cov.antineg.bed > "$basename".antisense_counts.bed
+    cat "$basename".cov.pos.bed "$basename".cov.neg.bed > "$basename".counts.bed
+    cat "$basename".cov.antipos.bed "$basename".cov.antineg.bed > "$basename".antisense_counts.bed
 
   fi
 
-  rm "$locname"*
+  rm "$basename".int.bed "$basename".cov.*.bed "$basename"*bam*
 
 done
-
-rm -r /localscratch/"$endtype"
 
 # Run python script to generate binned combined counts for metagenes
 # Bin sizes are defined within python script

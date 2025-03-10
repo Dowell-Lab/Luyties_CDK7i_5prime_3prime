@@ -15,124 +15,131 @@ indir = sys.argv[1]
 size_factor_file = sys.argv[2]
 window = int(sys.argv[3])
 endtype = sys.argv[4]
+dataset = sys.argv[5]
 
 ### Initialize global variables
-count_store = {}
-rep_store = {}
-size_factors = {}
+count_store,size_factors = {},{}
 sample_names = []
-sample_basenames = []
-senselist = list(Path(indir).glob('**/*.counts.bed')) # For ChIP-seq
+
+if dataset == 'totalpolII_ser7_only':
+  senselist = list(Path(indir).glob('**/5609_B2_N*.counts.bed'))
+  senselist = senselist + list(Path(indir).glob('**/5609_B2_7*.counts.bed'))
+elif dataset == 'totalpolII_ser7_IFN_SY_only':
+  senselist = [
+    os.path.join(indir,'5609_B2_N1.counts.bed'),
+    os.path.join(indir,'5609_B2_N2.counts.bed'),
+    os.path.join(indir,'5609_B2_71.counts.bed'),
+    os.path.join(indir,'5609_B2_72.counts.bed'),
+  ]
+else:
+  senselist = list(Path(indir).glob('**/*.counts.bed'))
+
 if endtype == '5prime':
-  binsizes = [5,20,50,100]
+  binsizes = [20,50,100,150]
 else:
   binsizes = [500,800,1000]
 
 ### Define functions
-def readin_counts(countdict,repdict,filename,sample,sample_base):
-  if sample not in countdict.keys():
-    countdict[sample] = {}
-  if sample_base not in repdict.keys():
-    repdict[sample_base] = {}
+def readin_counts(sampdict,filename,sample):
+  if sample not in sampdict.keys():
+    sampdict[sample] = {}
   with open(filename) as f:
-    counts = [0 for i in range(0,window)]
-    curr_gene = 'A'
-    curr_coord = 0
-    start_coord = 0
-    strand = '+'
+    region = {}
     firstline = True
-    for line in f:
-      countin = tuple(line.strip().split("\t"))
-      if int(countin[1]) == curr_coord:
+    counts,region = set_region_info(region,False,firstline)
+    for readline in f:
+      line = tuple(readline.strip().split("\t"))
+      if int(line[1]) == region['coord']:
         continue
-      if ((countin[7] == curr_gene) & (int(countin[5]) != start_coord)):
+      if (line[7] == region['name']) & (int(line[5]) != region['start_coord']):
         continue
-      if countin[7] != curr_gene:
+      if (line[7] == region['name']) & (int(line[6]) != region['end_coord']):
+        continue
+      if (line[7] != region['name']) & (int(line[5]) in range((region['start_coord']-1),(region['end_coord']+1))):
+        continue
+      if (line[7] != region['name']) & (int(line[6]) in range((region['start_coord']-1),(region['end_coord']+1))):
+        continue
+      if line[7] != region['name']:
         if not firstline:
-          if strand == '-':
-            counts.reverse()
-          counts = list(np.array(counts)/size_factors[sample])
-          counts = [int(i) if int(i) == i else i for i in counts]
-          countdict = add_counts(countdict,sample,counts,curr_gene)
-          repdict = add_replicate_counts(repdict,sample_base,counts,curr_gene)
+          sampdict = store_region(sampdict,counts,region,sample)
         firstline = False
-        counts = [0 for i in range(0,window)]
-        curr_gene = countin[7]
-        start_coord = int(countin[5])
-        strand = countin[9]
-      curr_coord = int(countin[1])
-      coord = curr_coord - start_coord
-      counts[coord] = int(countin[3])
-  if strand == '-':
-    counts.reverse()
-  counts = list(np.array(counts)/size_factors[sample])
-  counts = [int(i) if int(i) == i else i for i in counts]
-  countdict = add_counts(countdict,sample,counts,curr_gene)
-  repdict = add_replicate_counts(repdict,sample_base,counts,curr_gene)
-  return countdict,repdict
+        counts,region = set_region_info(region,line,firstline)
+      region['coord'] = int(line[1])
+      curr_coord = region['coord'] - region['start_coord']
+      counts[curr_coord] = int(line[3])
+  sampdict = store_region(sampdict,counts,region,sample)
+  return sampdict
 
-def add_counts(countdict,sample,rawcounts,gene):
-  if np.sum(rawcounts) > 50: # Only include genes that have some counts
-    countdict[sample][gene] = rawcounts
-  return countdict
-
-def add_replicate_counts(repdict,sample_base,repcounts,gene):
-  if gene in repdict[sample_base].keys():
-    repdict[sample_base][gene] = [
-      (repdict[sample_base][gene][i] + repcounts[i]) for i in range(0,len(repcounts))
-    ]
-    if np.sum(repcounts) < 51: # Only include genes that have some counts
-      repdict[sample_base].pop(gene)
+def set_region_info(reg,ln,first):
+  cts = [0 for i in range(0,window)]
+  if first:
+    reg['name'] = 'A'
+    reg['coord'],reg['start_coord'],reg['end_coord'] = 0,0,0
+    reg['strand'] = '+'
   else:
-    repdict[sample_base][gene] = repcounts
-  return repdict
+    reg['name'] = ln[7]
+    reg['start_coord'] = int(ln[5])
+    reg['end_coord'] = int(ln[6])
+    reg['strand'] = ln[9]
+  return cts,reg
 
-def find_genes_to_keep(countdict,sample):
-  current_counts = pd.DataFrame(countdict[sample])
-  # Find total reads per gene
-  colsums = current_counts.sum(axis=0)
-  colsums_sorted = colsums.sort_values(ascending = False)
-  shavepct = int(len(colsums_sorted)/20)
-  # Find middle 95% of genes
-  keep_genes = colsums_sorted[shavepct:(len(colsums_sorted) - shavepct + 1)]
-  keep_genes = list(keep_genes.index)
-  return keep_genes
+def store_region(sampcts,cts,reg,samp):
+  if reg['strand'] == '-':
+    cts.reverse()
+  cts = list(np.array(cts)/size_factors[samp])
+  cts = [int(i) if int(i) == i else i for i in cts]
+  sampcts = add_counts(sampcts,cts,reg['name'],samp)
+  return sampcts
 
-def sample_calc_output(countdict,sample,genes):
-  current_counts = pd.DataFrame(countdict[sample])
-  # Extract common genes across samples
-  current_counts = current_counts[genes]
-  calculations = bin_and_calculate(current_counts)
-  output_sample_data(calculations,sample)
-  return calculations['mean']
+def add_counts(store,ct,name,smp):
+  if np.sum(ct) > 50: # Only include regions that have some counts
+    store[smp][name] = ct
+  return store
 
-def bin_and_calculate(countdf):
-  binned = []
-  for i in range(0,(window-binsize-1)):
-    binsum = countdf.iloc[i:(i+binsize),:].sum(axis=0)
-    binned.append(binsum/binsize)
-  binneddf = pd.DataFrame(binned)
-  # Calculate metagene values
+def find_regions_to_keep(sampcts,samp):
+  curr_cts = pd.DataFrame(sampcts[samp])
+  # Find total reads per region
+  colsums = curr_cts.sum(axis=0)
+  colsums = colsums.sort_values(ascending = False)
+  shavepct = int(len(colsums)/20)
+  # Find middle 90% of regions
+  keep_regs = colsums[shavepct:(len(colsums) - shavepct + 1)]
+  keep_regs = list(keep_regs.index)
+  return keep_regs
+
+def bin_and_calculate(ctdf,bsize):
+  bct = []
+  for j in range(0,(window-bsize-1)):
+    bsum = ctdf.iloc[j:(j+bsize),:].sum(axis=0)
+    bct.append(list(bsum/bsize))
+  bdf = pd.DataFrame(bct,columns=ctdf.columns)
+  # Calculate values
   metacalcs = {
-    'allgenes': binneddf,
-    'med': binneddf.median(axis=1),
-    'mean': binneddf.mean(axis=1),
+    'allregs': bdf,
+    'mean': pd.DataFrame(bdf.mean(axis=1),columns=['mean_counts']),
   }
   return metacalcs
 
-def output_sample_data(metacalcs,sample):
+def sample_calc_output(countdict,samp,regs):
+  rep_df = pd.DataFrame(countdict[samp])
+  rep_df = rep_df.loc[:,regs]
+  # Calculate metagene values
+  calcs = bin_and_calculate(rep_df,binsize)
+  output_sample_data(calcs,samp)
+  return calcs['mean']
+
+def output_sample_data(metacalcs,smp):
   # Make output filenames
   outfiles = {
-    'allgenes': os.path.join(indir,sample + suffixes['allgenes']),
-    'med': os.path.join(indir,sample + suffixes['median']),
-    'mean': os.path.join(indir,sample + suffixes['mean']),
+    'allregs': os.path.join(indir,smp + suffixes['allregs']),
+    'mean': os.path.join(indir,smp + suffixes['mean']),
   }
   # Output data
   for key in metacalcs.keys():
     metacalcs[key].to_csv(
       outfiles[key],
       sep='\t',
-      header=False,
+      header=True,
       index=True,
       quoting=csv.QUOTE_NONE,
     )
@@ -141,65 +148,45 @@ def output_sample_data(metacalcs,sample):
 
 # 0) Read in size factors file
 with open(size_factor_file) as f:
-  for line in f:
-    inline = tuple(line.strip().split("\t"))
-    size_factors[inline[0]] = float(inline[1])
+  for readline in f:
+    line = tuple(readline.strip().split("\t"))
+    size_factors[line[0]] = float(line[1])
 
 # 1) Grab count numbers by looping through intersect files
 for path in senselist:
   sample_name = str(path).split('.')[0].split('/')[-1]
   sample_names.append(sample_name)
-  sample_basename = sample_name.split('_')
-  sample_basename = '_'.join(sample_basename[0:(len(sample_basename)-1)])
-  if sample_basename not in sample_basenames:
-    sample_basenames.append(sample_basename)
-  count_store,rep_store = readin_counts(count_store,rep_store,path,sample_name,sample_basename)
+  count_store = readin_counts(count_store,path,sample_name)
 
 # 2) Find middle 90% of genes in each sample, then find intersection
-all_genes = []
-all_rep_genes = []
+all_regs = []
+all_rep_regs = []
 for sample_name in sample_names:
-  sample_genes = find_genes_to_keep(count_store,sample_name)
-  all_genes.append(sample_genes)
+  sample_regs = find_regions_to_keep(count_store,sample_name)
+  all_regs.append(sample_regs)
 
-for sample_basename in sample_basenames:
-  sample_rep_genes = find_genes_to_keep(rep_store,sample_basename)
-  all_rep_genes.append(sample_rep_genes)
-
-final_gene_list = list(set.intersection(*map(set,all_genes)))
-final_rep_gene_list = list(set.intersection(*map(set,all_rep_genes)))
+final_reg_list = list(set.intersection(*map(set,all_regs)))
 
 # For each bin size:
 
 for binsize in binsizes:
   suffixes = {
-    'allgenes': ('.' + str(binsize) + 'bpbin.' + endtype + '_metagene.allgenes.txt'),
-    'median': ('.' + str(binsize) + 'bpbin.' + endtype + '_metagene.median.txt'),
+    'allregs': ('.' + str(binsize) + 'bpbin.' + endtype + '_metagene.allregions.txt'),
     'mean': ('.' + str(binsize) + 'bpbin.' + endtype + '_metagene.mean.txt'),
   }
   # 3) For each sample, extract genes, bin values, output counts and calcs
   all_sample_means = pd.DataFrame()
-  all_rep_means = pd.DataFrame()
   for sample_name in sample_names:
     sample_means = sample_calc_output(
       count_store,
       sample_name,
-      final_gene_list,
+      final_reg_list,
     )
-    all_sample_means[sample_name] = sample_means
+    all_sample_means[sample_name] = pd.Series(sample_means['mean_counts'])
   colnames = list(all_sample_means.columns)
   colnames.sort()
   all_sample_means = all_sample_means[colnames]
-  for sample_basename in sample_basenames:
-    rep_means = sample_calc_output(
-      rep_store,
-      sample_basename,
-      final_rep_gene_list,
-    )
-    all_rep_means[sample_basename] = rep_means
-  colnames = list(all_rep_means.columns)
-  colnames.sort()
-  all_rep_means = all_rep_means[colnames]
+
   # 4) Output all sample data
   outfile = os.path.join(indir,'all_samples.' + str(binsize) + 'bpbin.' + endtype + '_metagene.mean.txt')
   all_sample_means.to_csv(
@@ -209,13 +196,5 @@ for binsize in binsizes:
     index=True,
     quoting=csv.QUOTE_NONE,
   )
-  outfile = os.path.join(indir,'all_samples_combined_replicates.' + str(binsize) + 'bpbin.' + endtype + '_metagene.mean.txt')
-  all_rep_means.to_csv(
-    outfile,
-    sep='\t',
-    header=True,
-    index=True,
-    quoting=csv.QUOTE_NONE,
-  )
 
-# metagene_pipeline_geneends.py ends here
+# metagene_pipeline_geneends_v2.py ends here

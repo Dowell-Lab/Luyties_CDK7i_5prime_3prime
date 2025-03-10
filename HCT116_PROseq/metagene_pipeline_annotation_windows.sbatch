@@ -1,14 +1,15 @@
 #!/bin/bash
 #SBATCH --job-name=metagene_annotation      # Job name
 #SBATCH --mail-type=NONE         # Mail events (NONE, BEGIN, END, FAIL, ALL)
-#SBATCH --mail-user=<user email> # Where to send mail
+#SBATCH --mail-user=<email> # Where to send mail
 #SBATCH --nodes=1
 #SBATCH --ntasks=1               # Number of CPU (processer cores i.e. tasks)
 #SBATCH --time=00:05:00         # Time limit hrs:min:sec
 #SBATCH --partition=short
 #SBATCH --mem=8gb               # Memory limit
-#SBATCH --output=<path to outerr directory>/%x_%j.out
-#SBATCH --error=<path to outerr directory>/%x_%j.err
+#SBATCH --output=/path/to/outerr/%x_%j.out
+#SBATCH --error=/path/to/outerr/%x_%j.err
+
 
 ##### OUTPUT RUN PARAMETERS #######################
 
@@ -35,8 +36,8 @@ up3=$5
 down3=$6
 up5=$7
 down5=$8
-genome=<path to hg38 genome>/hg38.fa
-chromsizes=<path to hg38 genome>/hg38.chrom.sizes
+genome=/path/to/genome/fasta
+chromsizes=/path/to/genome/chromosome/sizes
 fullgene_annotation=hg38_refseq_genenames_included.bed
 
 ###################################################
